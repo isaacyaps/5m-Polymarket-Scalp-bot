@@ -126,6 +126,7 @@ def get_coinbase_candles(granularity):
     )
 
     response.raise_for_status()
+
     data = response.json()
 
     df = pd.DataFrame(
@@ -171,6 +172,7 @@ def get_order_book(token_id):
     )
 
     response.raise_for_status()
+
     return response.json()
 
 
@@ -315,7 +317,14 @@ def manage_trade(book_info):
         total_pnl += pnl
 
         save_state()
-        log_trade("WIN", open_trade["entry"], current_bid, pnl, open_trade["market"])
+
+        log_trade(
+            "WIN",
+            open_trade["entry"],
+            current_bid,
+            pnl,
+            open_trade["market"],
+        )
 
         message = (
             f"✅ 5M SCALP WIN\n"
@@ -332,6 +341,7 @@ def manage_trade(book_info):
         discord_notify(message)
 
         traded_contracts.add(open_trade["token_id"])
+
         open_trade = None
 
     elif current_bid <= open_trade["stop"]:
@@ -341,7 +351,14 @@ def manage_trade(book_info):
         total_pnl += pnl
 
         save_state()
-        log_trade("LOSS", open_trade["entry"], current_bid, pnl, open_trade["market"])
+
+        log_trade(
+            "LOSS",
+            open_trade["entry"],
+            current_bid,
+            pnl,
+            open_trade["market"],
+        )
 
         message = (
             f"❌ 5M SCALP LOSS\n"
@@ -358,6 +375,7 @@ def manage_trade(book_info):
         discord_notify(message)
 
         traded_contracts.add(open_trade["token_id"])
+
         open_trade = None
 
 
@@ -370,18 +388,20 @@ def maybe_enter_trade(signal, book_info):
     if current_token_id in traded_contracts:
         return
 
-    ask = book_info["best_ask"]
-    spread = book_info["spread"]
+    ask = float(book_info["best_ask"])
+    spread = float(book_info["spread"])
 
     bos_ok = signal["bos_ok"]
     spread_ok = spread <= MAX_SPREAD
 
+    # BLOCK BAD CONTRACTS
     if ask >= 0.92:
         return
 
     if ask <= 0.08:
         return
 
+    # BOS + SPREAD REQUIRED
     if not bos_ok or not spread_ok:
         if not QUIET_MODE:
             print(
@@ -393,8 +413,10 @@ def maybe_enter_trade(signal, book_info):
     risk_per_share = 0.06
 
     stop = max(0.01, ask - risk_per_share)
-    target = ask + risk_per_share * TAKE_PROFIT_RR
 
+    target = ask + (risk_per_share * TAKE_PROFIT_RR)
+
+    # PREVENT BROKEN TARGETS
     if target >= 0.99:
         return
 
@@ -437,7 +459,6 @@ def main():
     print("=======================================", flush=True)
     print(" BTC 5M Polymarket Paper Scalper", flush=True)
     print(" BOS + Spread Only", flush=True)
-    print(" PAPER MODE ONLY", flush=True)
     print(" FIXED RR MODE", flush=True)
     print("=======================================", flush=True)
     print(f"Loaded WR: {win_rate():.1f}%", flush=True)
@@ -447,7 +468,7 @@ def main():
     discord_notify(
         f"🤖 5M SCALPER STARTED\n"
         f"BOS + Spread only\n"
-        f"Fixed RR mode\n"
+        f"FIXED RR MODE\n"
         f"Loaded WR: {win_rate():.1f}%\n"
         f"Loaded Total PnL: ${total_pnl:.2f}"
     )
@@ -461,6 +482,7 @@ def main():
                 continue
 
             signal = get_bos_signal()
+
             book = get_order_book(token_id)
             book_info = parse_book(book)
 
@@ -469,7 +491,6 @@ def main():
 
         except requests.exceptions.HTTPError as error:
             print(f"[HTTP ERROR] {error}", flush=True)
-            print("[INFO] Refreshing 5m token after HTTP error.", flush=True)
             get_current_token(force=True)
 
         except Exception as error:
