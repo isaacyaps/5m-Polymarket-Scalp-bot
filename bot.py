@@ -25,9 +25,12 @@ current_token_id = None
 current_market_name = None
 last_token_refresh = 0
 
+traded_contracts = set()
+
 
 def discord_notify(message):
     webhook = os.getenv("DISCORD_WEBHOOK_URL") or DISCORD_WEBHOOK_URL
+
     if not webhook:
         return
 
@@ -50,8 +53,11 @@ def load_state():
         wins = state.get("wins", 0)
         losses = state.get("losses", 0)
         total_pnl = state.get("total_pnl", 0.0)
+
     except Exception:
-        pass
+        wins = 0
+        losses = 0
+        total_pnl = 0.0
 
 
 def save_state():
@@ -120,7 +126,6 @@ def get_coinbase_candles(granularity):
     )
 
     response.raise_for_status()
-
     data = response.json()
 
     df = pd.DataFrame(
@@ -166,7 +171,6 @@ def get_order_book(token_id):
     )
 
     response.raise_for_status()
-
     return response.json()
 
 
@@ -219,7 +223,6 @@ def find_5m_market_by_timestamp():
     base = now - (now % interval)
 
     possible_times = [
-        base - interval,
         base,
         base + interval,
         base + interval * 2,
@@ -278,7 +281,7 @@ def refresh_token():
 
         return True
 
-    print("[WAITING] No valid BTC 5m contract found yet. Retrying soon.", flush=True)
+    print("[WAITING] No valid BTC 5m contract found yet.", flush=True)
     return False
 
 
@@ -305,6 +308,9 @@ def manage_trade(book_info):
     if current_bid >= open_trade["target"]:
         pnl = (current_bid - open_trade["entry"]) * open_trade["shares"]
 
+        if pnl <= 0:
+            return
+
         wins += 1
         total_pnl += pnl
 
@@ -314,6 +320,8 @@ def manage_trade(book_info):
         message = (
             f"✅ 5M SCALP WIN\n"
             f"Market: {open_trade['market']}\n"
+            f"Entry: {open_trade['entry']:.3f}\n"
+            f"Exit: {current_bid:.3f}\n"
             f"PnL: ${pnl:.2f}\n"
             f"Total PnL: ${total_pnl:.2f}\n"
             f"WR: {win_rate():.1f}%\n"
@@ -323,6 +331,7 @@ def manage_trade(book_info):
         print(message, flush=True)
         discord_notify(message)
 
+        traded_contracts.add(open_trade["token_id"])
         open_trade = None
 
     elif current_bid <= open_trade["stop"]:
@@ -337,6 +346,8 @@ def manage_trade(book_info):
         message = (
             f"❌ 5M SCALP LOSS\n"
             f"Market: {open_trade['market']}\n"
+            f"Entry: {open_trade['entry']:.3f}\n"
+            f"Exit: {current_bid:.3f}\n"
             f"PnL: ${pnl:.2f}\n"
             f"Total PnL: ${total_pnl:.2f}\n"
             f"WR: {win_rate():.1f}%\n"
@@ -346,6 +357,7 @@ def manage_trade(book_info):
         print(message, flush=True)
         discord_notify(message)
 
+        traded_contracts.add(open_trade["token_id"])
         open_trade = None
 
 
@@ -355,11 +367,20 @@ def maybe_enter_trade(signal, book_info):
     if open_trade is not None:
         return
 
+    if current_token_id in traded_contracts:
+        return
+
     ask = book_info["best_ask"]
     spread = book_info["spread"]
 
     bos_ok = signal["bos_ok"]
     spread_ok = spread <= MAX_SPREAD
+
+    if ask >= 0.92:
+        return
+
+    if ask <= 0.08:
+        return
 
     if not bos_ok or not spread_ok:
         if not QUIET_MODE:
@@ -370,8 +391,16 @@ def maybe_enter_trade(signal, book_info):
         return
 
     risk_per_share = 0.06
+
     stop = max(0.01, ask - risk_per_share)
-    target = min(0.99, ask + risk_per_share * TAKE_PROFIT_RR)
+    target = ask + risk_per_share * TAKE_PROFIT_RR
+
+    if target >= 0.99:
+        return
+
+    if target <= ask:
+        return
+
     shares = RISK_PER_TRADE_USD / risk_per_share
 
     market_name = current_market_name or "BTC 5m Up/Down"
@@ -382,6 +411,7 @@ def maybe_enter_trade(signal, book_info):
         "target": target,
         "shares": shares,
         "market": market_name,
+        "token_id": current_token_id,
     }
 
     message = (
@@ -408,6 +438,7 @@ def main():
     print(" BTC 5M Polymarket Paper Scalper", flush=True)
     print(" BOS + Spread Only", flush=True)
     print(" PAPER MODE ONLY", flush=True)
+    print(" FIXED RR MODE", flush=True)
     print("=======================================", flush=True)
     print(f"Loaded WR: {win_rate():.1f}%", flush=True)
     print(f"Loaded Total PnL: ${total_pnl:.2f}", flush=True)
@@ -416,6 +447,7 @@ def main():
     discord_notify(
         f"🤖 5M SCALPER STARTED\n"
         f"BOS + Spread only\n"
+        f"Fixed RR mode\n"
         f"Loaded WR: {win_rate():.1f}%\n"
         f"Loaded Total PnL: ${total_pnl:.2f}"
     )
