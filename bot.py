@@ -473,8 +473,8 @@ def main():
     print("Bot running...", flush=True)
 
     discord_notify(
-        f"🤖 5M SCALPER STARTED\n"
-        f"BOS + Spread + EMA20/50\n"
+        f" 5M SCALPER STARTED\n"
+        f"BOS + Spread + EMA9/30\n"
         f"FIXED RR MODE\n"
         f"Loaded WR: {win_rate():.1f}%\n"
         f"Loaded Total PnL: ${total_pnl:.2f}"
