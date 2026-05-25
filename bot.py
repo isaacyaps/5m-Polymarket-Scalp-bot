@@ -129,7 +129,6 @@ def get_coinbase_candles(granularity):
     )
 
     response.raise_for_status()
-
     data = response.json()
 
     df = pd.DataFrame(
@@ -193,7 +192,6 @@ def get_order_book(token_id):
     )
 
     response.raise_for_status()
-
     return response.json()
 
 
@@ -346,24 +344,24 @@ def manage_trade(book_info):
     if open_trade is None:
         return
 
-    current_bid = book_info["best_bid"]
+    current_bid = float(book_info["best_bid"])
 
     if current_bid >= open_trade["target"]:
-        pnl = (current_bid - open_trade["entry"]) * open_trade["shares"]
+        exit_price = open_trade["target"]
+        pnl = (exit_price - open_trade["entry"]) * open_trade["shares"]
 
         if pnl <= 0:
             return
 
         wins += 1
         total_pnl += pnl
-
         save_state()
 
         log_trade(
             "WIN",
             open_trade["direction"],
             open_trade["entry"],
-            current_bid,
+            exit_price,
             pnl,
             open_trade["market"],
         )
@@ -373,7 +371,7 @@ def manage_trade(book_info):
             f"Direction: {open_trade['direction']}\n"
             f"Market: {open_trade['market']}\n"
             f"Entry: {open_trade['entry']:.3f}\n"
-            f"Exit: {current_bid:.3f}\n"
+            f"Exit: {exit_price:.3f}\n"
             f"PnL: ${pnl:.2f}\n"
             f"Total PnL: ${total_pnl:.2f}\n"
             f"WR: {win_rate():.1f}%\n"
@@ -387,18 +385,18 @@ def manage_trade(book_info):
         open_trade = None
 
     elif current_bid <= open_trade["stop"]:
-        pnl = (current_bid - open_trade["entry"]) * open_trade["shares"]
+        exit_price = open_trade["stop"]
+        pnl = (exit_price - open_trade["entry"]) * open_trade["shares"]
 
         losses += 1
         total_pnl += pnl
-
         save_state()
 
         log_trade(
             "LOSS",
             open_trade["direction"],
             open_trade["entry"],
-            current_bid,
+            exit_price,
             pnl,
             open_trade["market"],
         )
@@ -408,7 +406,7 @@ def manage_trade(book_info):
             f"Direction: {open_trade['direction']}\n"
             f"Market: {open_trade['market']}\n"
             f"Entry: {open_trade['entry']:.3f}\n"
-            f"Exit: {current_bid:.3f}\n"
+            f"Exit: {exit_price:.3f}\n"
             f"PnL: ${pnl:.2f}\n"
             f"Total PnL: ${total_pnl:.2f}\n"
             f"WR: {win_rate():.1f}%\n"
@@ -506,14 +504,14 @@ def main():
     print(" BTC 5M Polymarket Paper Scalper", flush=True)
     print(" BOTH DIRECTIONS MODE", flush=True)
     print(" BOS + Spread", flush=True)
-    print(" FIXED RR MODE", flush=True)
+    print(" FIXED CAPPED EXIT MODE", flush=True)
     print("=======================================", flush=True)
 
     discord_notify(
         f"🤖 5M SCALPER STARTED\n"
         f"Both directions mode\n"
         f"BOS + Spread\n"
-        f"FIXED RR MODE\n"
+        f"FIXED CAPPED EXIT MODE\n"
         f"Loaded WR: {win_rate():.1f}%\n"
         f"Loaded Total PnL: ${total_pnl:.2f}"
     )
@@ -544,6 +542,7 @@ def main():
 
         except Exception as error:
             print(f"[ERROR] {error}", flush=True)
+            discord_notify(f"⚠️ 5M SCALPER ERROR\n{error}")
 
         time.sleep(LOOP_SECONDS)
 
