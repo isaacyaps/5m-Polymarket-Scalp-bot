@@ -147,6 +147,7 @@ def get_coinbase_candles(granularity):
 def get_bos_signal():
     df_1m = get_coinbase_candles(60)
 
+    current_open = float(df_1m["open"].iloc[-1])
     current_close = float(df_1m["close"].iloc[-1])
 
     recent_high = float(
@@ -168,18 +169,25 @@ def get_bos_signal():
     bullish_bos = current_close > recent_high
     bearish_bos = current_close < recent_low
 
+    bullish_momentum = current_close > current_open
+    bearish_momentum = current_close < current_open
+
     direction = None
 
-    if bullish_bos:
+    if bullish_bos and bullish_momentum:
         direction = "UP"
 
-    elif bearish_bos:
+    elif bearish_bos and bearish_momentum:
         direction = "DOWN"
 
     return {
         "btc_price": current_close,
         "recent_high": recent_high,
         "recent_low": recent_low,
+        "bullish_bos": bullish_bos,
+        "bearish_bos": bearish_bos,
+        "bullish_momentum": bullish_momentum,
+        "bearish_momentum": bearish_momentum,
         "direction": direction,
     }
 
@@ -434,7 +442,6 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
     if direction == "UP":
         token_id = current_up_token_id
         book_info = up_book_info
-
     else:
         token_id = current_down_token_id
         book_info = down_book_info
@@ -487,7 +494,7 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
         f"Target: {target:.3f}\n"
         f"Stop: {stop:.3f}\n"
         f"Spread: {spread:.3f}\n"
-        f"BOS: TRUE\n"
+        f"BOS + Momentum: TRUE\n"
         f"Risk: ${RISK_PER_TRADE_USD:.2f}\n"
         f"Current WR: {win_rate():.1f}%\n"
         f"Total PnL: ${total_pnl:.2f}"
@@ -503,14 +510,14 @@ def main():
     print("=======================================", flush=True)
     print(" BTC 5M Polymarket Paper Scalper", flush=True)
     print(" BOTH DIRECTIONS MODE", flush=True)
-    print(" BOS + Spread", flush=True)
+    print(" BOS + Momentum + Spread", flush=True)
     print(" FIXED CAPPED EXIT MODE", flush=True)
     print("=======================================", flush=True)
 
     discord_notify(
         f"🤖 5M SCALPER STARTED\n"
         f"Both directions mode\n"
-        f"BOS + Spread\n"
+        f"BOS + Momentum + Spread\n"
         f"FIXED CAPPED EXIT MODE\n"
         f"Loaded WR: {win_rate():.1f}%\n"
         f"Loaded Total PnL: ${total_pnl:.2f}"
