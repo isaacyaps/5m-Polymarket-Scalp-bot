@@ -177,7 +177,9 @@ def get_bos_signal():
         .iloc[-1]
     )
 
-    latest_rsi = float(rsi(df_1m["close"], RSI_PERIOD).iloc[-1])
+    latest_rsi = float(
+        rsi(df_1m["close"], RSI_PERIOD).iloc[-1]
+    )
 
     bullish_bos = current_close > recent_high
     bearish_bos = current_close < recent_low
@@ -185,15 +187,28 @@ def get_bos_signal():
     bullish_momentum = current_close > current_open
     bearish_momentum = current_close < current_open
 
-    bullish_rsi = latest_rsi >= RSI_UP_MIN
-    bearish_rsi = latest_rsi <= RSI_DOWN_MAX
+    bullish_rsi = (
+        RSI_UP_MIN <= latest_rsi <= RSI_UP_MAX
+    )
+
+    bearish_rsi = (
+        RSI_DOWN_MIN <= latest_rsi <= RSI_DOWN_MAX
+    )
 
     direction = None
 
-    if bullish_bos and bullish_momentum and bullish_rsi:
+    if (
+        bullish_bos
+        and bullish_momentum
+        and bullish_rsi
+    ):
         direction = "UP"
 
-    elif bearish_bos and bearish_momentum and bearish_rsi:
+    elif (
+        bearish_bos
+        and bearish_momentum
+        and bearish_rsi
+    ):
         direction = "DOWN"
 
     return {
@@ -373,13 +388,14 @@ def manage_trade(book_info):
 
     if current_bid >= open_trade["target"]:
         exit_price = open_trade["target"]
-        pnl = (exit_price - open_trade["entry"]) * open_trade["shares"]
 
-        if pnl <= 0:
-            return
+        pnl = (
+            exit_price - open_trade["entry"]
+        ) * open_trade["shares"]
 
         wins += 1
         total_pnl += pnl
+
         save_state()
 
         log_trade(
@@ -411,10 +427,14 @@ def manage_trade(book_info):
 
     elif current_bid <= open_trade["stop"]:
         exit_price = open_trade["stop"]
-        pnl = (exit_price - open_trade["entry"]) * open_trade["shares"]
+
+        pnl = (
+            exit_price - open_trade["entry"]
+        ) * open_trade["shares"]
 
         losses += 1
         total_pnl += pnl
+
         save_state()
 
         log_trade(
@@ -459,6 +479,7 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
     if direction == "UP":
         token_id = current_up_token_id
         book_info = up_book_info
+
     else:
         token_id = current_down_token_id
         book_info = down_book_info
@@ -489,9 +510,13 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
     if target <= ask:
         return
 
-    shares = RISK_PER_TRADE_USD / risk_per_share
+    shares = (
+        RISK_PER_TRADE_USD / risk_per_share
+    )
 
-    market_name = current_market_name or "BTC 5m Up/Down"
+    market_name = (
+        current_market_name or "BTC 5m Up/Down"
+    )
 
     open_trade = {
         "entry": ask,
@@ -562,12 +587,19 @@ def main():
                     manage_trade(up_book_info)
                 else:
                     manage_trade(down_book_info)
+
             else:
-                maybe_enter_trade(signal, up_book_info, down_book_info)
+                maybe_enter_trade(
+                    signal,
+                    up_book_info,
+                    down_book_info,
+                )
 
         except Exception as error:
             print(f"[ERROR] {error}", flush=True)
-            discord_notify(f"⚠️ 5M SCALPER ERROR\n{error}")
+            discord_notify(
+                f"⚠️ 5M SCALPER ERROR\n{error}"
+            )
 
         time.sleep(LOOP_SECONDS)
 
