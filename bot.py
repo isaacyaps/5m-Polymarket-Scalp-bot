@@ -450,7 +450,7 @@ def maybe_enter_trade(signal, book_info):
         f"Stop: {stop:.3f}\n"
         f"Spread: {spread:.3f}\n"
         f"BOS: TRUE\n"
-        f"EMA20 > EMA50: TRUE\n"
+        f"EMA9 > EMA30: TRUE\n"
         f"Risk: ${RISK_PER_TRADE_USD:.2f}\n"
         f"Current WR: {win_rate():.1f}%\n"
         f"Total PnL: ${total_pnl:.2f}"
