@@ -21,7 +21,8 @@ wins = 0
 losses = 0
 total_pnl = 0.0
 
-current_token_id = None
+current_up_token_id = None
+current_down_token_id = None
 current_market_name = None
 last_token_refresh = 0
 
@@ -78,7 +79,7 @@ def win_rate():
     return wins / total * 100 if total else 0.0
 
 
-def log_trade(result, entry, exit_price, pnl, market_name):
+def log_trade(result, direction, entry, exit_price, pnl, market_name):
     file_exists = os.path.exists(TRADES_FILE)
 
     with open(TRADES_FILE, "a", newline="") as f:
@@ -88,6 +89,7 @@ def log_trade(result, entry, exit_price, pnl, market_name):
             writer.writerow([
                 "time",
                 "market",
+                "direction",
                 "result",
                 "entry",
                 "exit",
@@ -99,6 +101,7 @@ def log_trade(result, entry, exit_price, pnl, market_name):
         writer.writerow([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             market_name,
+            direction,
             result,
             round(entry, 4),
             round(exit_price, 4),
@@ -155,12 +158,30 @@ def get_bos_signal():
         .iloc[-1]
     )
 
-    bos_ok = current_close > recent_high
+    recent_low = float(
+        df_1m["low"]
+        .rolling(BOS_LOOKBACK_CANDLES)
+        .min()
+        .shift(1)
+        .iloc[-1]
+    )
+
+    bullish_bos = current_close > recent_high
+    bearish_bos = current_close < recent_low
+
+    direction = None
+
+    if bullish_bos:
+        direction = "UP"
+
+    elif bearish_bos:
+        direction = "DOWN"
 
     return {
         "btc_price": current_close,
         "recent_high": recent_high,
-        "bos_ok": bos_ok,
+        "recent_low": recent_low,
+        "direction": direction,
     }
 
 
@@ -196,7 +217,7 @@ def parse_book(book):
     }
 
 
-def get_up_token_from_market(market):
+def get_tokens_from_market(market):
     outcomes = market.get("outcomes")
     token_ids = market.get("clobTokenIds")
 
@@ -207,16 +228,24 @@ def get_up_token_from_market(market):
         if isinstance(token_ids, str):
             token_ids = json.loads(token_ids)
     except Exception:
-        return None
+        return None, None
 
     if not outcomes or not token_ids:
-        return None
+        return None, None
+
+    up_token = None
+    down_token = None
 
     for outcome, token_id in zip(outcomes, token_ids):
-        if str(outcome).lower() in ["up", "yes"]:
-            return str(token_id)
+        outcome = str(outcome).lower()
 
-    return None
+        if outcome in ["up", "yes"]:
+            up_token = str(token_id)
+
+        if outcome in ["down", "no"]:
+            down_token = str(token_id)
+
+    return up_token, down_token
 
 
 def find_5m_market_by_timestamp():
@@ -246,18 +275,24 @@ def find_5m_market_by_timestamp():
             markets = event.get("markets") or []
 
             for market in markets:
-                token = get_up_token_from_market(market)
+                up_token, down_token = get_tokens_from_market(market)
 
-                if not token:
+                if not up_token or not down_token:
                     continue
 
                 try:
-                    book = get_order_book(token)
-                    parsed = parse_book(book)
+                    up_book = get_order_book(up_token)
+                    down_book = get_order_book(down_token)
 
-                    if parsed["best_ask"] > 0 and parsed["best_bid"] >= 0:
+                    up_parsed = parse_book(up_book)
+                    down_parsed = parse_book(down_book)
+
+                    if (
+                        up_parsed["best_ask"] > 0
+                        and down_parsed["best_ask"] > 0
+                    ):
                         name = market.get("question") or slug
-                        return token, name
+                        return up_token, down_token, name
 
                 except Exception:
                     continue
@@ -265,21 +300,26 @@ def find_5m_market_by_timestamp():
         except Exception:
             continue
 
-    return None, None
+    return None, None, None
 
 
 def refresh_token():
-    global current_token_id, current_market_name, last_token_refresh
+    global current_up_token_id
+    global current_down_token_id
+    global current_market_name
+    global last_token_refresh
 
-    token, name = find_5m_market_by_timestamp()
+    up_token, down_token, name = find_5m_market_by_timestamp()
 
-    if token:
-        current_token_id = token
+    if up_token and down_token:
+        current_up_token_id = up_token
+        current_down_token_id = down_token
         current_market_name = name
         last_token_refresh = time.time()
 
         print(f"[INFO] Using market: {name}", flush=True)
-        print(f"[INFO] Token ID: {token}", flush=True)
+        print(f"[INFO] UP Token ID: {up_token}", flush=True)
+        print(f"[INFO] DOWN Token ID: {down_token}", flush=True)
 
         return True
 
@@ -287,16 +327,17 @@ def refresh_token():
     return False
 
 
-def get_current_token(force=False):
+def get_current_tokens(force=False):
     expired = (
-        current_token_id is None
+        current_up_token_id is None
+        or current_down_token_id is None
         or time.time() - last_token_refresh >= TOKEN_REFRESH_SECONDS
     )
 
     if force or expired:
         refresh_token()
 
-    return current_token_id
+    return current_up_token_id, current_down_token_id
 
 
 def manage_trade(book_info):
@@ -320,6 +361,7 @@ def manage_trade(book_info):
 
         log_trade(
             "WIN",
+            open_trade["direction"],
             open_trade["entry"],
             current_bid,
             pnl,
@@ -328,6 +370,7 @@ def manage_trade(book_info):
 
         message = (
             f"✅ 5M SCALP WIN\n"
+            f"Direction: {open_trade['direction']}\n"
             f"Market: {open_trade['market']}\n"
             f"Entry: {open_trade['entry']:.3f}\n"
             f"Exit: {current_bid:.3f}\n"
@@ -353,6 +396,7 @@ def manage_trade(book_info):
 
         log_trade(
             "LOSS",
+            open_trade["direction"],
             open_trade["entry"],
             current_bid,
             pnl,
@@ -361,6 +405,7 @@ def manage_trade(book_info):
 
         message = (
             f"❌ 5M SCALP LOSS\n"
+            f"Direction: {open_trade['direction']}\n"
             f"Market: {open_trade['market']}\n"
             f"Entry: {open_trade['entry']:.3f}\n"
             f"Exit: {current_bid:.3f}\n"
@@ -377,20 +422,30 @@ def manage_trade(book_info):
         open_trade = None
 
 
-def maybe_enter_trade(signal, book_info):
+def maybe_enter_trade(signal, up_book_info, down_book_info):
     global open_trade
 
     if open_trade is not None:
         return
 
-    if current_token_id in traded_contracts:
+    direction = signal["direction"]
+
+    if direction is None:
+        return
+
+    if direction == "UP":
+        token_id = current_up_token_id
+        book_info = up_book_info
+
+    else:
+        token_id = current_down_token_id
+        book_info = down_book_info
+
+    if token_id in traded_contracts:
         return
 
     ask = float(book_info["best_ask"])
     spread = float(book_info["spread"])
-
-    bos_ok = signal["bos_ok"]
-    spread_ok = spread <= MAX_SPREAD
 
     if ask >= MAX_ENTRY_PRICE:
         return
@@ -398,7 +453,7 @@ def maybe_enter_trade(signal, book_info):
     if ask <= MIN_ENTRY_PRICE:
         return
 
-    if not bos_ok or not spread_ok:
+    if spread > MAX_SPREAD:
         return
 
     risk_per_share = 0.06
@@ -422,13 +477,15 @@ def maybe_enter_trade(signal, book_info):
         "target": target,
         "shares": shares,
         "market": market_name,
-        "token_id": current_token_id,
+        "token_id": token_id,
+        "direction": direction,
     }
 
     message = (
         f"📈 NEW 5M SCALP\n"
+        f"Direction: {direction}\n"
         f"Market: {market_name}\n"
-        f"BUY UP @ {ask:.3f}\n"
+        f"BUY {direction} @ {ask:.3f}\n"
         f"Target: {target:.3f}\n"
         f"Stop: {stop:.3f}\n"
         f"Spread: {spread:.3f}\n"
@@ -447,12 +504,14 @@ def main():
 
     print("=======================================", flush=True)
     print(" BTC 5M Polymarket Paper Scalper", flush=True)
+    print(" BOTH DIRECTIONS MODE", flush=True)
     print(" BOS + Spread", flush=True)
     print(" FIXED RR MODE", flush=True)
     print("=======================================", flush=True)
 
     discord_notify(
         f"🤖 5M SCALPER STARTED\n"
+        f"Both directions mode\n"
         f"BOS + Spread\n"
         f"FIXED RR MODE\n"
         f"Loaded WR: {win_rate():.1f}%\n"
@@ -461,19 +520,27 @@ def main():
 
     while True:
         try:
-            token_id = get_current_token()
+            up_token, down_token = get_current_tokens()
 
-            if not token_id:
+            if not up_token or not down_token:
                 time.sleep(LOOP_SECONDS)
                 continue
 
             signal = get_bos_signal()
 
-            book = get_order_book(token_id)
-            book_info = parse_book(book)
+            up_book = get_order_book(up_token)
+            down_book = get_order_book(down_token)
 
-            manage_trade(book_info)
-            maybe_enter_trade(signal, book_info)
+            up_book_info = parse_book(up_book)
+            down_book_info = parse_book(down_book)
+
+            if open_trade is not None:
+                if open_trade["direction"] == "UP":
+                    manage_trade(up_book_info)
+                else:
+                    manage_trade(down_book_info)
+            else:
+                maybe_enter_trade(signal, up_book_info, down_book_info)
 
         except Exception as error:
             print(f"[ERROR] {error}", flush=True)
