@@ -142,10 +142,6 @@ def get_coinbase_candles(granularity):
     return df.reset_index(drop=True)
 
 
-def ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
-
-
 def get_bos_signal():
     df_1m = get_coinbase_candles(60)
 
@@ -159,19 +155,12 @@ def get_bos_signal():
         .iloc[-1]
     )
 
-    ema_fast = ema(df_1m["close"], 9).iloc[-1]
-    ema_slow = ema(df_1m["close"], 30).iloc[-1]
-
     bos_ok = current_close > recent_high
-    ema_trend_ok = ema_fast > ema_slow
 
     return {
         "btc_price": current_close,
         "recent_high": recent_high,
         "bos_ok": bos_ok,
-        "ema_trend_ok": ema_trend_ok,
-        "ema_fast": float(ema_fast),
-        "ema_slow": float(ema_slow),
     }
 
 
@@ -401,7 +390,6 @@ def maybe_enter_trade(signal, book_info):
     spread = float(book_info["spread"])
 
     bos_ok = signal["bos_ok"]
-    ema_ok = signal["ema_trend_ok"]
     spread_ok = spread <= MAX_SPREAD
 
     if ask >= MAX_ENTRY_PRICE:
@@ -410,12 +398,7 @@ def maybe_enter_trade(signal, book_info):
     if ask <= MIN_ENTRY_PRICE:
         return
 
-    if not bos_ok or not ema_ok or not spread_ok:
-        if not QUIET_MODE:
-            print(
-                f"[NO TRADE] BOS={bos_ok} EMA={ema_ok} Spread={spread:.3f}",
-                flush=True,
-            )
+    if not bos_ok or not spread_ok:
         return
 
     risk_per_share = 0.06
@@ -450,7 +433,6 @@ def maybe_enter_trade(signal, book_info):
         f"Stop: {stop:.3f}\n"
         f"Spread: {spread:.3f}\n"
         f"BOS: TRUE\n"
-        f"EMA9 > EMA30: TRUE\n"
         f"Risk: ${RISK_PER_TRADE_USD:.2f}\n"
         f"Current WR: {win_rate():.1f}%\n"
         f"Total PnL: ${total_pnl:.2f}"
@@ -465,16 +447,13 @@ def main():
 
     print("=======================================", flush=True)
     print(" BTC 5M Polymarket Paper Scalper", flush=True)
-    print(" BOS + Spread + EMA20/50", flush=True)
+    print(" BOS + Spread", flush=True)
     print(" FIXED RR MODE", flush=True)
     print("=======================================", flush=True)
-    print(f"Loaded WR: {win_rate():.1f}%", flush=True)
-    print(f"Loaded Total PnL: ${total_pnl:.2f}", flush=True)
-    print("Bot running...", flush=True)
 
     discord_notify(
-        f" 5M SCALPER STARTED\n"
-        f"BOS + Spread + EMA9/30\n"
+        f"🤖 5M SCALPER STARTED\n"
+        f"BOS + Spread\n"
         f"FIXED RR MODE\n"
         f"Loaded WR: {win_rate():.1f}%\n"
         f"Loaded Total PnL: ${total_pnl:.2f}"
@@ -496,13 +475,8 @@ def main():
             manage_trade(book_info)
             maybe_enter_trade(signal, book_info)
 
-        except requests.exceptions.HTTPError as error:
-            print(f"[HTTP ERROR] {error}", flush=True)
-            get_current_token(force=True)
-
         except Exception as error:
             print(f"[ERROR] {error}", flush=True)
-            discord_notify(f"⚠️ 5M SCALPER ERROR\n{error}")
 
         time.sleep(LOOP_SECONDS)
 
