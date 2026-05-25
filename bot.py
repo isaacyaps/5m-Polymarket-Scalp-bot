@@ -159,8 +159,8 @@ def get_bos_signal():
         .iloc[-1]
     )
 
-    ema_fast = ema(df_1m["close"], 20).iloc[-1]
-    ema_slow = ema(df_1m["close"], 50).iloc[-1]
+    ema_fast = ema(df_1m["close"], 9).iloc[-1]
+    ema_slow = ema(df_1m["close"], 30).iloc[-1]
 
     bos_ok = current_close > recent_high
     ema_trend_ok = ema_fast > ema_slow
