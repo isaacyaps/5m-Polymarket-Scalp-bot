@@ -41,6 +41,14 @@ def discord_notify(message):
         pass
 
 
+def simple_status_message():
+    return (
+        f"Yapp Scalp Bot\n"
+        f"WR: {win_rate():.1f}%\n"
+        f"PnL: ${total_pnl:.2f}"
+    )
+
+
 def load_state():
     global wins, losses, total_pnl
 
@@ -197,18 +205,10 @@ def get_bos_signal():
 
     direction = None
 
-    if (
-        bullish_bos
-        and bullish_momentum
-        and bullish_rsi
-    ):
+    if bullish_bos and bullish_momentum and bullish_rsi:
         direction = "UP"
 
-    elif (
-        bearish_bos
-        and bearish_momentum
-        and bearish_rsi
-    ):
+    elif bearish_bos and bearish_momentum and bearish_rsi:
         direction = "DOWN"
 
     return {
@@ -225,6 +225,8 @@ def get_bos_signal():
 
 
 def get_order_book(token_id):
+    time.sleep(0.2)
+
     response = requests.get(
         f"{CLOB_API}/book",
         params={"token_id": token_id},
@@ -378,91 +380,83 @@ def get_current_tokens(force=False):
     return current_up_token_id, current_down_token_id
 
 
-def manage_trade(book_info):
+def close_trade(result, exit_price):
     global open_trade, wins, losses, total_pnl
+
+    pnl = (
+        exit_price - open_trade["entry"]
+    ) * open_trade["shares"]
+
+    if result == "WIN":
+        wins += 1
+    else:
+        losses += 1
+
+    total_pnl += pnl
+
+    save_state()
+
+    log_trade(
+        result,
+        open_trade["direction"],
+        open_trade["entry"],
+        exit_price,
+        pnl,
+        open_trade["market"],
+    )
+
+    print(simple_status_message(), flush=True)
+    discord_notify(simple_status_message())
+
+    traded_contracts.add(open_trade["token_id"])
+    open_trade = None
+
+
+def manage_trade(book_info):
+    global open_trade
 
     if open_trade is None:
         return
 
     current_bid = float(book_info["best_bid"])
 
-    if current_bid >= open_trade["target"]:
-        exit_price = open_trade["target"]
+    trail_after_target = globals().get("TRAIL_AFTER_TARGET", True)
+    trail_distance = globals().get("TRAIL_DISTANCE", 0.02)
 
-        pnl = (
-            exit_price - open_trade["entry"]
-        ) * open_trade["shares"]
+    if trail_after_target:
+        if not open_trade.get("trail_active", False):
+            if current_bid >= open_trade["target"]:
+                open_trade["trail_active"] = True
+                open_trade["highest_bid"] = current_bid
+                open_trade["trail_stop"] = max(
+                    open_trade["entry"],
+                    open_trade["target"] - trail_distance,
+                )
 
-        wins += 1
-        total_pnl += pnl
+        else:
+            if current_bid > open_trade["highest_bid"]:
+                open_trade["highest_bid"] = current_bid
+                open_trade["trail_stop"] = max(
+                    open_trade["trail_stop"],
+                    current_bid - trail_distance,
+                )
 
-        save_state()
+            if current_bid <= open_trade["trail_stop"]:
+                close_trade("WIN", open_trade["trail_stop"])
+                return
 
-        log_trade(
-            "WIN",
-            open_trade["direction"],
-            open_trade["entry"],
-            exit_price,
-            pnl,
-            open_trade["market"],
-        )
+        if current_bid <= open_trade["stop"]:
+            close_trade("LOSS", open_trade["stop"])
+            return
 
-        message = (
-            f"✅ 5M SCALP WIN\n"
-            f"Direction: {open_trade['direction']}\n"
-            f"Market: {open_trade['market']}\n"
-            f"Entry: {open_trade['entry']:.3f}\n"
-            f"Exit: {exit_price:.3f}\n"
-            f"PnL: ${pnl:.2f}\n"
-            f"Total PnL: ${total_pnl:.2f}\n"
-            f"WR: {win_rate():.1f}%\n"
-            f"Wins: {wins} | Losses: {losses}"
-        )
+    else:
+        if current_bid >= open_trade["target"]:
+            close_trade("WIN", open_trade["target"])
+            return
 
-        print(message, flush=True)
-        discord_notify(message)
-
-        traded_contracts.add(open_trade["token_id"])
-        open_trade = None
-
-    elif current_bid <= open_trade["stop"]:
-        exit_price = open_trade["stop"]
-
-        pnl = (
-            exit_price - open_trade["entry"]
-        ) * open_trade["shares"]
-
-        losses += 1
-        total_pnl += pnl
-
-        save_state()
-
-        log_trade(
-            "LOSS",
-            open_trade["direction"],
-            open_trade["entry"],
-            exit_price,
-            pnl,
-            open_trade["market"],
-        )
-
-        message = (
-            f"❌ 5M SCALP LOSS\n"
-            f"Direction: {open_trade['direction']}\n"
-            f"Market: {open_trade['market']}\n"
-            f"Entry: {open_trade['entry']:.3f}\n"
-            f"Exit: {exit_price:.3f}\n"
-            f"PnL: ${pnl:.2f}\n"
-            f"Total PnL: ${total_pnl:.2f}\n"
-            f"WR: {win_rate():.1f}%\n"
-            f"Wins: {wins} | Losses: {losses}"
-        )
-
-        print(message, flush=True)
-        discord_notify(message)
-
-        traded_contracts.add(open_trade["token_id"])
-        open_trade = None
+        if current_bid <= open_trade["stop"]:
+            close_trade("LOSS", open_trade["stop"])
+            return
 
 
 def maybe_enter_trade(signal, up_book_info, down_book_info):
@@ -479,7 +473,6 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
     if direction == "UP":
         token_id = current_up_token_id
         book_info = up_book_info
-
     else:
         token_id = current_down_token_id
         book_info = down_book_info
@@ -526,45 +519,26 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
         "market": market_name,
         "token_id": token_id,
         "direction": direction,
+        "trail_active": False,
+        "trail_stop": None,
+        "highest_bid": ask,
     }
 
-    message = (
-        f"📈 NEW 5M SCALP\n"
-        f"Direction: {direction}\n"
-        f"Market: {market_name}\n"
-        f"BUY {direction} @ {ask:.3f}\n"
-        f"Target: {target:.3f}\n"
-        f"Stop: {stop:.3f}\n"
-        f"Spread: {spread:.3f}\n"
-        f"RSI: {signal['rsi']:.1f}\n"
-        f"BOS + Momentum + RSI: TRUE\n"
-        f"Risk: ${RISK_PER_TRADE_USD:.2f}\n"
-        f"Current WR: {win_rate():.1f}%\n"
-        f"Total PnL: ${total_pnl:.2f}"
-    )
-
-    print(message, flush=True)
-    discord_notify(message)
+    print(simple_status_message(), flush=True)
+    discord_notify(simple_status_message())
 
 
 def main():
     load_state()
 
     print("=======================================", flush=True)
-    print(" BTC 5M Polymarket Paper Scalper", flush=True)
+    print(" Yapp Scalp Bot", flush=True)
     print(" BOTH DIRECTIONS MODE", flush=True)
     print(" BOS + Momentum + RSI + Spread", flush=True)
-    print(" FIXED CAPPED EXIT MODE", flush=True)
+    print(" TRAILING STOP MODE", flush=True)
     print("=======================================", flush=True)
 
-    discord_notify(
-        f"🤖 5M SCALPER STARTED\n"
-        f"Both directions mode\n"
-        f"BOS + Momentum + RSI + Spread\n"
-        f"FIXED CAPPED EXIT MODE\n"
-        f"Loaded WR: {win_rate():.1f}%\n"
-        f"Loaded Total PnL: ${total_pnl:.2f}"
-    )
+    discord_notify(simple_status_message())
 
     while True:
         try:
@@ -598,7 +572,9 @@ def main():
         except Exception as error:
             print(f"[ERROR] {error}", flush=True)
             discord_notify(
-                f"⚠️ 5M SCALPER ERROR\n{error}"
+                f"Yapp Scalp Bot\n"
+                f"WR: {win_rate():.1f}%\n"
+                f"PnL: ${total_pnl:.2f}"
             )
 
         time.sleep(LOOP_SECONDS)
