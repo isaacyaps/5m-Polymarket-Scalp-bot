@@ -31,7 +31,6 @@ traded_contracts = set()
 
 def discord_notify(message):
     webhook = os.getenv("DISCORD_WEBHOOK_URL") or DISCORD_WEBHOOK_URL
-
     if not webhook:
         return
 
@@ -39,14 +38,6 @@ def discord_notify(message):
         requests.post(webhook, json={"content": message}, timeout=10)
     except Exception:
         pass
-
-
-def simple_status_message():
-    return (
-        f"Yapp Scalp Bot\n"
-        f"WR: {win_rate():.1f}%\n"
-        f"PnL: ${total_pnl:.2f}"
-    )
 
 
 def load_state():
@@ -87,6 +78,14 @@ def win_rate():
     return wins / total * 100 if total else 0.0
 
 
+def status_lines():
+    return (
+        f"W: {wins} | L: {losses}\n"
+        f"WR: {win_rate():.1f}%\n"
+        f"PnL: ${total_pnl:.2f}"
+    )
+
+
 def log_trade(result, direction, entry, exit_price, pnl, market_name):
     file_exists = os.path.exists(TRADES_FILE)
 
@@ -95,15 +94,8 @@ def log_trade(result, direction, entry, exit_price, pnl, market_name):
 
         if not file_exists:
             writer.writerow([
-                "time",
-                "market",
-                "direction",
-                "result",
-                "entry",
-                "exit",
-                "pnl",
-                "total_pnl",
-                "win_rate",
+                "time", "market", "direction", "result",
+                "entry", "exit", "pnl", "total_pnl", "win_rate",
             ])
 
         writer.writerow([
@@ -154,12 +146,9 @@ def get_coinbase_candles(granularity):
 
 def rsi(series, period):
     delta = series.diff()
-
     gain = delta.where(delta > 0, 0).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-
     rs = gain / loss.replace(0, pd.NA)
-
     return (100 - (100 / (1 + rs))).fillna(50)
 
 
@@ -185,9 +174,7 @@ def get_bos_signal():
         .iloc[-1]
     )
 
-    latest_rsi = float(
-        rsi(df_1m["close"], RSI_PERIOD).iloc[-1]
-    )
+    latest_rsi = float(rsi(df_1m["close"], RSI_PERIOD).iloc[-1])
 
     bullish_bos = current_close > recent_high
     bearish_bos = current_close < recent_low
@@ -195,19 +182,13 @@ def get_bos_signal():
     bullish_momentum = current_close > current_open
     bearish_momentum = current_close < current_open
 
-    bullish_rsi = (
-        RSI_UP_MIN <= latest_rsi <= RSI_UP_MAX
-    )
-
-    bearish_rsi = (
-        RSI_DOWN_MIN <= latest_rsi <= RSI_DOWN_MAX
-    )
+    bullish_rsi = RSI_UP_MIN <= latest_rsi <= RSI_UP_MAX
+    bearish_rsi = RSI_DOWN_MIN <= latest_rsi <= RSI_DOWN_MAX
 
     direction = None
 
     if bullish_bos and bullish_momentum and bullish_rsi:
         direction = "UP"
-
     elif bearish_bos and bearish_momentum and bearish_rsi:
         direction = "DOWN"
 
@@ -216,10 +197,6 @@ def get_bos_signal():
         "recent_high": recent_high,
         "recent_low": recent_low,
         "rsi": latest_rsi,
-        "bullish_bos": bullish_bos,
-        "bearish_bos": bearish_bos,
-        "bullish_momentum": bullish_momentum,
-        "bearish_momentum": bearish_momentum,
         "direction": direction,
     }
 
@@ -383,9 +360,8 @@ def get_current_tokens(force=False):
 def close_trade(result, exit_price):
     global open_trade, wins, losses, total_pnl
 
-    pnl = (
-        exit_price - open_trade["entry"]
-    ) * open_trade["shares"]
+    entry_price = open_trade["entry"]
+    pnl = (exit_price - entry_price) * open_trade["shares"]
 
     if result == "WIN":
         wins += 1
@@ -393,20 +369,31 @@ def close_trade(result, exit_price):
         losses += 1
 
     total_pnl += pnl
-
     save_state()
 
     log_trade(
         result,
         open_trade["direction"],
-        open_trade["entry"],
+        entry_price,
         exit_price,
         pnl,
         open_trade["market"],
     )
 
-    print(simple_status_message(), flush=True)
-    discord_notify(simple_status_message())
+    icon = "✅" if result == "WIN" else "❌"
+
+    message = (
+        f"{icon} 5M SCALP {result}\n"
+        f"Direction: {open_trade['direction']}\n"
+        f"Market: {open_trade['market']}\n"
+        f"Entry: {entry_price:.3f}\n"
+        f"Exit: {exit_price:.3f}\n"
+        f"PnL: ${pnl:.2f}\n"
+        f"{status_lines()}"
+    )
+
+    print(message, flush=True)
+    discord_notify(message)
 
     traded_contracts.add(open_trade["token_id"])
     open_trade = None
@@ -432,7 +419,6 @@ def manage_trade(book_info):
                     open_trade["entry"],
                     open_trade["target"] - trail_distance,
                 )
-
         else:
             if current_bid > open_trade["highest_bid"]:
                 open_trade["highest_bid"] = current_bid
@@ -503,13 +489,9 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
     if target <= ask:
         return
 
-    shares = (
-        RISK_PER_TRADE_USD / risk_per_share
-    )
+    shares = RISK_PER_TRADE_USD / risk_per_share
 
-    market_name = (
-        current_market_name or "BTC 5m Up/Down"
-    )
+    market_name = current_market_name or "BTC 5m Up/Down"
 
     open_trade = {
         "entry": ask,
@@ -524,8 +506,22 @@ def maybe_enter_trade(signal, up_book_info, down_book_info):
         "highest_bid": ask,
     }
 
-    print(simple_status_message(), flush=True)
-    discord_notify(simple_status_message())
+    message = (
+        f"📈 NEW 5M SCALP\n"
+        f"Direction: {direction}\n"
+        f"Market: {market_name}\n"
+        f"BUY {direction} @ {ask:.3f}\n"
+        f"Target/Trail Activation: {target:.3f}\n"
+        f"Stop: {stop:.3f}\n"
+        f"Spread: {spread:.3f}\n"
+        f"RSI: {signal['rsi']:.1f}\n"
+        f"BOS + Momentum + RSI: TRUE\n"
+        f"Trailing: ON after target\n"
+        f"{status_lines()}"
+    )
+
+    print(message, flush=True)
+    discord_notify(message)
 
 
 def main():
@@ -538,7 +534,10 @@ def main():
     print(" TRAILING STOP MODE", flush=True)
     print("=======================================", flush=True)
 
-    discord_notify(simple_status_message())
+    discord_notify(
+        f"🤖 Yapp Scalp Bot Started\n"
+        f"{status_lines()}"
+    )
 
     while True:
         try:
@@ -561,20 +560,14 @@ def main():
                     manage_trade(up_book_info)
                 else:
                     manage_trade(down_book_info)
-
             else:
-                maybe_enter_trade(
-                    signal,
-                    up_book_info,
-                    down_book_info,
-                )
+                maybe_enter_trade(signal, up_book_info, down_book_info)
 
         except Exception as error:
             print(f"[ERROR] {error}", flush=True)
             discord_notify(
-                f"Yapp Scalp Bot\n"
-                f"WR: {win_rate():.1f}%\n"
-                f"PnL: ${total_pnl:.2f}"
+                f"⚠️ Yapp Scalp Bot Error\n"
+                f"{status_lines()}"
             )
 
         time.sleep(LOOP_SECONDS)
