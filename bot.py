@@ -82,7 +82,7 @@ def status_lines():
     return (
         f"W: {wins} | L: {losses}\n"
         f"WR: {win_rate():.1f}%\n"
-        f"PnL: ${total_pnl:.2f}"
+        f"Total PnL: ${total_pnl:.2f}"
     )
 
 
@@ -94,8 +94,15 @@ def log_trade(result, direction, entry, exit_price, pnl, market_name):
 
         if not file_exists:
             writer.writerow([
-                "time", "market", "direction", "result",
-                "entry", "exit", "pnl", "total_pnl", "win_rate",
+                "time",
+                "market",
+                "direction",
+                "result",
+                "entry",
+                "exit",
+                "pnl",
+                "total_pnl",
+                "win_rate",
             ])
 
         writer.writerow([
@@ -189,6 +196,7 @@ def get_bos_signal():
 
     if bullish_bos and bullish_momentum and bullish_rsi:
         direction = "UP"
+
     elif bearish_bos and bearish_momentum and bearish_rsi:
         direction = "DOWN"
 
@@ -361,14 +369,14 @@ def close_trade(result, exit_price):
     global open_trade, wins, losses, total_pnl
 
     entry_price = open_trade["entry"]
-    pnl = (exit_price - entry_price) * open_trade["shares"]
+    trade_pnl = (exit_price - entry_price) * open_trade["shares"]
 
     if result == "WIN":
         wins += 1
     else:
         losses += 1
 
-    total_pnl += pnl
+    total_pnl += trade_pnl
     save_state()
 
     log_trade(
@@ -376,7 +384,7 @@ def close_trade(result, exit_price):
         open_trade["direction"],
         entry_price,
         exit_price,
-        pnl,
+        trade_pnl,
         open_trade["market"],
     )
 
@@ -388,7 +396,7 @@ def close_trade(result, exit_price):
         f"Market: {open_trade['market']}\n"
         f"Entry: {entry_price:.3f}\n"
         f"Exit: {exit_price:.3f}\n"
-        f"PnL: ${pnl:.2f}\n"
+        f"Trade PnL: ${trade_pnl:.2f}\n"
         f"{status_lines()}"
     )
 
